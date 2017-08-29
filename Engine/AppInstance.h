@@ -417,6 +417,9 @@ public:
     const ProjectBeingLoadedInfo& getProjectBeingLoadedInfo() const;
     void setProjectBeingLoadedInfo(const ProjectBeingLoadedInfo& info);
 
+    //add by lihaiping1603@aliyun.com at 20170824
+    void quitInstance();
+
 public Q_SLOTS:
 
     void quit();

@@ -1052,6 +1052,7 @@ AppManager::loadInternalAfterInitGui(const CLArgs& cl)
     }
 
     if ( isBackground() && !cl.getIPCPipeName().isEmpty() ) {
+		//针对后台模式,渲染时候的进度信息也是通过writeToOutputPipe函数而打印输出到ProcessInputChannel的
         _imp->initProcessInputChannel( cl.getIPCPipeName() );
     }
 
@@ -1090,14 +1091,18 @@ AppManager::loadInternalAfterInitGui(const CLArgs& cl)
 
         return false;
     } else {
+        /*这个函数会在gui里面进行重载,同时是gui的重要处理函数,处理后续的任务;
+		而对于非gui模式,这个函数是个空函数*/
         onLoadCompleted();
 
         ///In background project auto-run the rendering is finished at this point, just exit the instance
         if ( ( (_imp->_appType == eAppTypeBackgroundAutoRun) ||
                ( _imp->_appType == eAppTypeBackgroundAutoRunLaunchedFromGui) ||
                ( _imp->_appType == eAppTypeInterpreter) ) && mainInstance ) {
+               //后台模式
+               //
             bool wasKilled = true;
-            const AppInstanceVec& instances = appPTR->getAppInstances();
+            const AppInstanceVec& instances = appPTR->getAppInstances();//获取存储appinstance的vector
             for (AppInstanceVec::const_iterator it = instances.begin(); it != instances.end(); ++it) {
                 if ( (*it == mainInstance) ) {
                     wasKilled = false;
@@ -1105,12 +1110,14 @@ AppManager::loadInternalAfterInitGui(const CLArgs& cl)
             }
             if (!wasKilled) {
                 try {
+					//这个函数是主要的处理项目后台渲染函数，它会进行视频渲染等操作
                     mainInstance->getProject()->reset(true/*aboutToQuit*/, true /*blocking*/);
                 } catch (std::logic_error) {
                     // ignore
                 }
 
                 try {
+					//退出
                     mainInstance->quitNow();
                 } catch (std::logic_error) {
                     // ignore
@@ -1120,7 +1127,242 @@ AppManager::loadInternalAfterInitGui(const CLArgs& cl)
 
         return true;
     }
-} // AppManager::loadInternalAfterInitGui
+}
+
+
+//add several func for project render by lihaiping1603@aliyun.com at 20170809
+bool AppManager::loadMiscAfterInitGui(const CLArgs &cl)
+{
+    try {
+        size_t maxCacheRAM = _imp->_settings->getRamMaximumPercent() * getSystemTotalRAM();
+        U64 viewerCacheSize = _imp->_settings->getMaximumViewerDiskCacheSize();
+        U64 maxDiskCacheNode = _imp->_settings->getMaximumDiskCacheNodeSize();
+
+        _imp->_nodeCache.reset( new Cache<Image>("NodeCache", NATRON_CACHE_VERSION, maxCacheRAM, 1.) );
+        _imp->_diskCache.reset( new Cache<Image>("DiskCache", NATRON_CACHE_VERSION, maxDiskCacheNode, 0.) );
+        _imp->_viewerCache.reset( new Cache<FrameEntry>("ViewerCache", NATRON_CACHE_VERSION, viewerCacheSize, 0.) );
+        _imp->setViewerCacheTileSize();
+    } catch (std::logic_error) {
+        // ignore
+    }
+
+    int oldCacheVersion = 0;
+    {
+        QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
+
+        if ( settings.contains( QString::fromUtf8(kNatronCacheVersionSettingsKey) ) ) {
+            oldCacheVersion = settings.value( QString::fromUtf8(kNatronCacheVersionSettingsKey) ).toInt();
+        }
+        settings.setValue(QString::fromUtf8(kNatronCacheVersionSettingsKey), NATRON_CACHE_VERSION);
+    }
+
+    setLoadingStatus( tr("Restoring the image cache...") );
+
+    if (oldCacheVersion != NATRON_CACHE_VERSION) {
+        wipeAndCreateDiskCacheStructure();
+    } else {
+        _imp->restoreCaches();
+    }
+
+    setLoadingStatus( tr("Loading plugin cache...") );
+
+
+    ///Set host properties after restoring settings since it depends on the host name.
+    try {
+        _imp->ofxHost->setProperties();
+    } catch (std::logic_error) {
+        // ignore
+    }
+
+    /*loading all plugins*/
+    try {
+        loadAllPlugins();
+        _imp->loadBuiltinFormats();
+    } catch (std::logic_error) {
+        // ignore
+    }
+
+    if ( isBackground() && !cl.getIPCPipeName().isEmpty() ) {
+        //针对后台模式,渲染时候的进度信息也是通过writeToOutputPipe函数而打印输出到ProcessInputChannel的
+        _imp->initProcessInputChannel( cl.getIPCPipeName() );
+    }
+
+
+    if ( cl.isInterpreterMode() ) {
+        _imp->_appType = eAppTypeInterpreter;
+    } else if ( isBackground() ) {
+        if ( !cl.getScriptFilename().isEmpty() ) {
+            if ( !cl.getIPCPipeName().isEmpty() ) {
+                _imp->_appType = eAppTypeBackgroundAutoRunLaunchedFromGui;
+            } else {
+                _imp->_appType = eAppTypeBackgroundAutoRun;
+            }
+        } else {
+            _imp->_appType = eAppTypeBackground;
+        }
+    } else {
+        _imp->_appType = eAppTypeGui;
+    }
+
+    return true;
+}
+
+
+bool AppManager::loadMainProjectAfterInitGui_NoQuit(const CLArgs &cl)
+{
+    //Now that the locale is set, re-parse the command line arguments because the filenames might have non UTF-8 encodings
+    CLArgs args;
+    if ( !cl.getScriptFilename().isEmpty() ) {
+        const QStringList& appArgs = qApp->arguments();
+        args = CLArgs( appArgs, cl.isBackgroundMode() );
+    } else {
+        args = cl;
+    }
+    AppInstPtr mainInstance = newAppInstance(args, false);
+
+    hideSplashScreen();
+
+    if (!mainInstance) {
+        qApp->quit();
+
+        return false;
+    } else  {
+        /*这个函数会在gui里面进行重载,同时是gui的重要处理函数,处理后续的任务;
+        而对于非gui模式,这个函数是个空函数*/
+        onLoadCompleted();
+
+        ///In background project auto-run the rendering is finished at this point, just exit the instance
+        if ( ( (_imp->_appType == eAppTypeBackgroundAutoRun) ||
+               ( _imp->_appType == eAppTypeBackgroundAutoRunLaunchedFromGui) ||
+               ( _imp->_appType == eAppTypeInterpreter) ) && mainInstance ) {
+               //后台模式
+               //
+               //这里更改一下模式,在渲染完以后我们不退出，
+               //这样可以方便其他后续的工程能够方便的进行多次渲染，而不必进行再次环境初始化
+               //同时这个工程作为main_project它的释放时间为appmanager的析构函数,什么周期和appmanger一样
+//            bool wasKilled = true;
+//            const AppInstanceVec& instances = appPTR->getAppInstances();//获取存储appinstance的vector
+//            for (AppInstanceVec::const_iterator it = instances.begin(); it != instances.end(); ++it) {
+//                if ( (*it == mainInstance) ) {
+//                    wasKilled = false;
+//                }
+//            }
+//            if (!wasKilled) {
+                try {
+                    //这个函数是主要的处理项目后台渲染函数，它会进行视频渲染等操作
+                    mainInstance->getProject()->reset(true/*aboutToQuit*/, true /*blocking*/);
+                } catch (std::logic_error) {
+                    // ignore
+                }
+
+                try {
+                    //退出
+                   // mainInstance->quitNow();
+                    mainInstance->quitInstance();
+                } catch (std::logic_error) {
+                    // ignore
+                }
+//            }
+        }
+    }
+    return true;
+}
+
+bool AppManager::loadExternProjectAfterInitGui_Quit(const CLArgs &cl)
+{
+    //Now that the locale is set, re-parse the command line arguments because the filenames might have non UTF-8 encodings
+    CLArgs args=cl;
+
+    AppInstPtr ExternInstance = newAppInstance(args, false);
+
+    hideSplashScreen();
+
+    if (!ExternInstance) {
+        return false;
+    } else  {
+        /*这个函数会在gui里面进行重载,同时是gui的重要处理函数,处理后续的任务;
+        而对于非gui模式,这个函数是个空函数*/
+        onLoadCompleted();
+
+        ///In background project auto-run the rendering is finished at this point, just exit the instance
+        if ( ( (_imp->_appType == eAppTypeBackgroundAutoRun) ||
+               ( _imp->_appType == eAppTypeBackgroundAutoRunLaunchedFromGui) ||
+               ( _imp->_appType == eAppTypeInterpreter) ) && ExternInstance ) {
+               //后台模式
+
+               try {
+                    //这个函数是主要的处理项目后台渲染函数，它会进行视频渲染等操作
+                    ExternInstance->getProject()->reset(true/*aboutToQuit*/, true /*blocking*/);
+                } catch (std::logic_error) {
+                    // ignore
+                }
+
+                try {
+                    //退出
+                    //ExternInstance->quitNow();
+                    ExternInstance->quitInstance();
+                } catch (std::logic_error) {
+                    // ignore
+                }
+        }
+    }
+    return true;
+}
+
+void AppManager::quitInstance(const AppInstPtr &instance)
+{
+    NodesList nodesToWatch;
+
+    instance->getProject()->getNodes_recursive(nodesToWatch, false);
+    if ( !nodesToWatch.empty() ) {
+        for (NodesList::iterator it = nodesToWatch.begin(); it != nodesToWatch.end(); ++it) {
+            (*it)->quitAnyProcessing_blocking(false);
+        }
+    }
+    boost::shared_ptr<QuitInstanceArgs> args(new QuitInstanceArgs);
+    args->instance = instance;
+    afterQuitProcessingCallbackInstance(args);
+}
+
+void AppManager::afterQuitProcessingCallbackInstance(const WatcherCallerArgsPtr &args)
+{
+    QuitInstanceArgs* inArgs = dynamic_cast<QuitInstanceArgs*>( args.get() );
+
+    if (!inArgs) {
+        return;
+    }
+
+    AppInstPtr instance = inArgs->instance.lock();
+
+    instance->aboutToQuit();
+
+    appPTR->removeInstance( instance->getAppID() );
+    --_imp->_availableID;
+
+    int nbApps = getNumInstances();
+    ///if we exited the last instance, exit the event loop, this will make
+    /// the exec() function return.
+    //For repeated loading and render
+//    if (nbApps == 0) {
+//        assert(qApp);
+//        qApp->quit();
+//    }
+
+    // This should kill the AppInstance
+    instance.reset();
+}
+
+void AppManager::quitApp()
+{
+    int nbApps = getNumInstances();
+    ///if we exited the last instance, exit the event loop, this will make
+    /// the exec() function return.
+    if (nbApps == 0) {
+        assert(qApp);
+        qApp->quit();
+    }
+}
+// AppManager::loadInternalAfterInitGui
 
 void
 AppManager::onViewerTileCacheSizeChanged()
@@ -1163,6 +1405,7 @@ AppManager::newAppInstanceInternal(const CLArgs& cl,
     AppInstPtr instance;
 
     if (!alwaysBackground) {
+        //针对
         instance = makeNewInstance(_imp->_availableID);
     } else {
         instance.reset( new AppInstance(_imp->_availableID) );
@@ -3315,6 +3558,7 @@ AppManager::tearDownPython()
 
     Py_DECREF(_imp->mainModule);
     Py_Finalize();
+    //the second called Py_Finalize,may Caught segmentation fault (SIGSEGV)
 }
 
 PyObject*

@@ -625,7 +625,7 @@ AppInstance::loadInternal(const CLArgs& cl,
             }
         }
 
-
+		/*从命令行中的输入参数解析输入节点的work;例如NatronRender -i MyReader ~/pictures.png -w MyWriter rendered###.exr*/
         getWritersWorkForCL(cl, writersWork);
 
 
@@ -658,10 +658,11 @@ AppInstance::loadInternal(const CLArgs& cl,
             }
         }
 
+		//启动后台渲染render
         ///launch renders
-        if ( !writersWork.empty() ) {
+        if ( !writersWork.empty() ) {//如果命令行writerwork节点存在,通过调用这个函数进行启动
             startWritersRendering(false, writersWork);
-        } else {
+        } else {//否则，从项目文件中的节点名字进行启动渲染render
             std::list<std::string> writers;
             startWritersRenderingFromNames( cl.areRenderStatsEnabled(), false, writers, cl.getFrameRanges() );
         }
@@ -2014,6 +2015,12 @@ AppInstance::aboutToQuit()
     ///Clear nodes now, not in the destructor of the project as
     ///deleting nodes might reference the project.
     _imp->_currentProject->reset(true /*aboutToQuit*/, /*blocking*/true);
+}
+
+void
+AppInstance::quitInstance()
+{
+    appPTR->quitInstance( shared_from_this() );
 }
 
 void

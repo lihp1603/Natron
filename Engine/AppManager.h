@@ -268,7 +268,10 @@ public:
      * @brief If the current process is a background process, then it will right the output pipe the
      * short message. Otherwise the longMessage is printed to stdout
      **/
-    bool writeToOutputPipe(const QString & longMessage, const QString & shortMessage, bool printIfNoChannel);
+//    bool writeToOutputPipe(const QString & longMessage, const QString & shortMessage, bool printIfNoChannel);
+
+    //modefy by lihaiping1603-2017-08-01
+    virtual bool writeToOutputPipe(const QString & longMessage, const QString & shortMessage, bool printIfNoChannel);
 
     /**
      * @brief Abort any processing on all AppInstance. It is called in some very rare cases
@@ -295,6 +298,12 @@ public:
      * @brief Same as quit except that it blocks until all processing is done instead of doing it in a separate thread.
      **/
     void quitNow(const AppInstPtr& instance);
+
+    /*
+    *add by lihaiping1603@aliyun.com at 20170824
+    *func quitInstance
+    */
+    void quitInstance(const AppInstPtr& instance);
 
     /*
        @brief Calls quit() on all AppInstance's
@@ -667,6 +676,13 @@ protected:
 
     bool loadInternalAfterInitGui(const CLArgs& cl);
 
+    //add by lihaiping1603@aliyun.com at 20170809
+	//添加几个函数
+     bool loadMiscAfterInitGui(const CLArgs& cl);
+     bool loadMainProjectAfterInitGui_NoQuit(const CLArgs& cl);
+     bool loadExternProjectAfterInitGui_Quit(const CLArgs& cl);
+     void afterQuitProcessingCallbackInstance(const WatcherCallerArgsPtr& args);
+     void quitApp();
 private:
 
     void findAllScriptsRecursive(const QDir& directory,
